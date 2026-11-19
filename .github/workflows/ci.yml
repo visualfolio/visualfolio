@@ -6,6 +6,11 @@ on:
   pull_request:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish (vX.Y.Z)
+        required: true
 
 permissions:
   contents: read
@@ -37,6 +42,8 @@ jobs:
         working-directory: visualfolio
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/0.11.32/install.sh | sh
@@ -48,19 +55,21 @@ jobs:
 
   image:
     needs: test
-    if: github.event_name == 'release' && github.repository == 'visualfolio/visualfolio'
+    if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && github.repository == 'visualfolio/visualfolio'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     env:
       IMAGE: ghcr.io/visualfolio/visualfolio
-      VERSION: ${{ github.event.release.tag_name }}
+      VERSION: ${{ github.event.release.tag_name || inputs.tag }}
       REGISTRY_USER: ${{ github.actor }}
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - name: Require a vX.Y.Z release tag
         run: |
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -68,7 +77,11 @@ jobs:
             exit 1
           fi
       - name: Enable arm64 emulation
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-binfmt
+          sudo systemctl restart systemd-binfmt
+          test -e /proc/sys/fs/binfmt_misc/qemu-aarch64
       - name: Log in to GHCR
         run: echo "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
       - name: Build and push
